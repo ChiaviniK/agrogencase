@@ -175,7 +175,7 @@ st.caption("Se este gráfico mostrar picos gigantes, seus dados estão sujos!")
 
 # Carrega os dados (simulando o que o aluno faria)
 # No código real do aluno, eles devem carregar o 'df_limpo', não o sujo.
-df_audit = load_data_from_github("https://raw.githubusercontent.com/.../historico_leituras_sujo.csv")
+df_audit = load_data_from_github("https://raw.githubusercontent.com/ChiaviniK/agrogencase/refs/heads/main/historico_leituras_sujo.csv")
 
 if df_audit is not None:
     # Converter para datetime para o gráfico funcionar
@@ -185,3 +185,4 @@ if df_audit is not None:
     st.line_chart(df_audit.set_index('timestamp')['temp_ambiente'])
     
     st.warning("Dica: Se você vê temperaturas de 200°C+ acima, você precisa implementar um filtro de limpeza no Python!")
+
