@@ -6,8 +6,8 @@ from datetime import datetime
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="AgroTech: Cristo Redentor",
-    page_icon="🌱",
+    page_title="AgroTech: Case Study Hub",
+    page_icon="🚜",
     layout="wide"
 )
 
@@ -31,58 +31,67 @@ LAT = -22.9519
 LON = -43.2105
 NOME_LOCAL = "Rio de Janeiro - Cristo Redentor"
 
-# Links RAW do GitHub (para download direto)
-URL_CONFIG = "https://raw.githubusercontent.com/ChiaviniK/agrogencase/main/config_culturas.csv"
-URL_HISTORICO = "https://raw.githubusercontent.com/ChiaviniK/agrogencase/main/historico_leituras.csv"
+# --- LINKS DO GITHUB (Atualize com seu usuário se necessário) ---
+# DICA: Use o link "Raw" do GitHub para funcionar o download direto
+BASE_URL = "https://raw.githubusercontent.com/ChiaviniK/agrogencase/main"
+URL_CONFIG = f"{BASE_URL}/config_culturas.csv"
+URL_TARIFAS = f"{BASE_URL}/tarifas_energia.csv"
+URL_HISTORICO_SUJO = f"{BASE_URL}/historico_leituras_sujo.csv"
 
-# --- Sidebar: Área de Download para Alunos ---
+# --- SIDEBAR: Área do Aluno (Downloads) ---
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/tractor.png", width=80)
     st.title("AgroTech Case")
     st.markdown("---")
     st.header("📁 Material de Apoio")
-    st.info("Baixe aqui as bases de dados para iniciar o desafio.")
+    st.info("Baixe as bases de dados para resolver o desafio:")
 
-    # Função para carregar dados do GitHub sem travar o app (Cache)
+    # Função Helper para Download
     @st.cache_data
-    def load_data_from_github(url):
+    def load_data(url):
         try:
             return pd.read_csv(url)
         except:
             return None
 
-    # Botão 1: Configuração
-    df_config = load_data_from_github(URL_CONFIG)
+    # 1. Regras (Config)
+    df_config = load_data(URL_CONFIG)
     if df_config is not None:
-        csv_config = df_config.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Baixar Regras (CSV)",
-            data=csv_config,
+            "📥 1. Regras de Cultura (CSV)",
+            data=df_config.to_csv(index=False).encode('utf-8'),
             file_name="config_culturas.csv",
-            mime="text/csv",
-            help="Tabela com umidade ideal para cada cultura"
+            mime="text/csv"
         )
-    else:
-        st.error("Erro ao carregar Config.")
 
-    # Botão 2: Histórico
-    df_hist = load_data_from_github(URL_HISTORICO)
-    if df_hist is not None:
-        csv_hist = df_hist.to_csv(index=False).encode('utf-8')
+    # 2. Tarifas (Energia) - NOVO!
+    df_tarifas = load_data(URL_TARIFAS)
+    if df_tarifas is not None:
         st.download_button(
-            label="📥 Baixar Histórico (CSV)",
-            data=csv_hist,
-            file_name="historico_leituras.csv",
+            "📥 2. Tarifas de Energia (CSV)",
+            data=df_tarifas.to_csv(index=False).encode('utf-8'),
+            file_name="tarifas_energia.csv",
             mime="text/csv",
-            help="Dados de sensores dos últimos 30 dias"
+            help="Use para otimizar custos (Tarifa Branca)"
+        )
+
+    # 3. Histórico (Sujo) - ATUALIZADO!
+    df_sujo = load_data(URL_HISTORICO_SUJO)
+    if df_sujo is not None:
+        st.download_button(
+            "📥 3. Histórico Sensores (CSV)",
+            data=df_sujo.to_csv(index=False).encode('utf-8'),
+            file_name="historico_leituras_sujo.csv",
+            mime="text/csv",
+            help="ATENÇÃO: Contém dados brutos que precisam de tratamento!"
         )
     else:
-        st.error("Erro ao carregar Histórico.")
+        st.error("Erro ao carregar CSVs. Verifique o GitHub.")
     
     st.markdown("---")
-    st.caption("v1.2 - Case Study Build")
+    st.caption("v2.0 - Pleno Level Challenge")
 
-# --- Funções de Dados (Back-end Simulado) ---
+# --- Funções de Dados (Simulação) ---
 
 def get_weather_data():
     """Busca dados REAIS de clima da API Open-Meteo"""
@@ -90,20 +99,18 @@ def get_weather_data():
         url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current=temperature_2m,rain&hourly=rain&timezone=America%2FSao_Paulo&forecast_days=1"
         response = requests.get(url)
         data = response.json()
-        
         return {
             "temp_atual": data['current']['temperature_2m'],
             "chuva_atual": data['current']['rain'],
             "chuva_prevista_3h": sum(data['hourly']['rain'][0:3])
         }
-    except Exception as e:
+    except:
         return {"temp_atual": 25.0, "chuva_atual": 0.0, "chuva_prevista_3h": 0.0}
 
 def get_soil_sensor_simulated():
-    """Simula os dados do sensor de solo"""
+    """Simula sensor"""
     return {
         "umidade": np.random.uniform(30, 80),
-        "ph": np.random.uniform(5.5, 7.0),
         "bomba_ativa": np.random.choice([True, False])
     }
 
@@ -118,8 +125,9 @@ with col_logo:
 
 st.divider()
 
-if st.button('🔄 Atualizar Telemetria em Tempo Real'):
-    with st.spinner('Sincronizando sensores e satélite...'):
+# Botão Refresh
+if st.button('🔄 Atualizar Telemetria'):
+    with st.spinner('Conectando satélite...'):
         weather = get_weather_data()
         soil = get_soil_sensor_simulated()
         st.toast('Dados atualizados!', icon='✅')
@@ -127,62 +135,34 @@ else:
     weather = get_weather_data()
     soil = get_soil_sensor_simulated()
 
-# --- KPIs ---
+# KPIs
 col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("🌡️ Temp. Ambiente", f"{weather['temp_atual']} °C")
-with col2:
-    color_rain = "inverse" if weather['chuva_prevista_3h'] > 0 else "normal"
-    st.metric("🌧️ Chuva (3h)", f"{weather['chuva_prevista_3h']} mm", delta_color=color_rain)
-with col3:
-    st.metric("💧 Umidade Solo", f"{soil['umidade']:.1f} %")
-with col4:
-    status_bomba = "LIGADA" if soil['bomba_ativa'] else "DESLIGADA"
-    st.metric("⚙️ Status Bomba", status_bomba)
+with col1: st.metric("🌡️ Temp. Ambiente", f"{weather['temp_atual']} °C")
+with col2: st.metric("🌧️ Chuva (3h)", f"{weather['chuva_prevista_3h']} mm")
+with col3: st.metric("💧 Umidade Solo", f"{soil['umidade']:.1f} %")
+with col4: st.metric("⚙️ Status Bomba", "LIGADA" if soil['bomba_ativa'] else "OFF")
 
 # --- Engine de Decisão ---
 st.subheader("🧠 Diagnóstico da IA")
+st.info("O sistema está operando com base nas regras de negócio carregadas.")
 
-umidade_ideal_min = 60.0
-chuva_limite = 5.0 
-
-with st.expander("Ver Detalhes da Decisão Automática", expanded=True):
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Regras Ativas:**")
-        st.code(f"Umidade Mínima: {umidade_ideal_min}%\nChuva Limite:   {chuva_limite}mm")
-    
-    with col_b:
-        if soil['umidade'] < umidade_ideal_min:
-            if weather['chuva_prevista_3h'] >= chuva_limite:
-                st.success("🚫 SOLO SECO + CHUVA À VISTA. IRRIGAÇÃO ABORTADA (ECONOMIA).")
-            else:
-                st.warning("💦 SOLO SECO. ACIONANDO IRRIGAÇÃO...")
-        else:
-            st.info("✅ UMIDADE IDEAL. NENHUMA AÇÃO NECESSÁRIA.")
-
-# --- Gráfico ---
+# --- Auditoria de Qualidade de Dados (Visualização do Problema) ---
 st.divider()
-st.subheader("📊 Monitoramento (Últimas 24h)")
-chart_data = pd.DataFrame(
-    np.random.randn(24, 2) + [soil['umidade'], weather['temp_atual']],
-    columns=['Umidade Solo', 'Temperatura']
-)
-st.line_chart(chart_data)
+st.subheader("🕵️ Auditoria de Qualidade (Data Quality)")
+st.markdown("Visualização dos dados brutos do arquivo `historico_leituras_sujo.csv`.")
 
-st.subheader("🕵️ Auditoria de Qualidade dos Dados")
-st.caption("Se este gráfico mostrar picos gigantes, seus dados estão sujos!")
-
-# Carrega os dados (simulando o que o aluno faria)
-# No código real do aluno, eles devem carregar o 'df_limpo', não o sujo.
-df_audit = load_data_from_github("https://raw.githubusercontent.com/ChiaviniK/agrogencase/refs/heads/main/historico_leituras_sujo.csv")
-
-if df_audit is not None:
-    # Converter para datetime para o gráfico funcionar
-    df_audit['timestamp'] = pd.to_datetime(df_audit['timestamp'])
+if df_sujo is not None:
+    # Convertendo data para o gráfico funcionar
+    df_viz = df_sujo.copy()
+    df_viz['timestamp'] = pd.to_datetime(df_viz['timestamp'])
     
-    # Gráfico que vai revelar os erros (Picos de 500 graus)
-    st.line_chart(df_audit.set_index('timestamp')['temp_ambiente'])
+    # Checkbox para dar spoiler do erro
+    mostrar_erro = st.checkbox("🔍 Revelar anomalias nos dados (Spoiler)")
     
-    st.warning("Dica: Se você vê temperaturas de 200°C+ acima, você precisa implementar um filtro de limpeza no Python!")
-
+    if mostrar_erro:
+        st.line_chart(df_viz.set_index('timestamp')['temp_ambiente'])
+        st.warning("⚠️ ALERTA: Detectamos picos de temperatura irreais (>100°C). Sua equipe precisa filtrar isso!")
+    else:
+        # Mostra apenas as primeiras linhas para não assustar de cara
+        st.dataframe(df_viz.head(10))
+        st.caption("Amostra das primeiras 10 linhas.")
