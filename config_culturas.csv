@@ -1,4 +1,4 @@
-id_cultura,nome,umidade_min,umidade_max
-1,Soja,60,80
-2,Milho,50,70
-3,Café,45,65
+id_cultura,nome,umidade_min,kc_fator
+1,Soja,60,1.1
+2,Milho,50,1.2
+3,Café,45,0.9
