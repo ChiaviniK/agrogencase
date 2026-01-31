@@ -235,7 +235,16 @@ with tab3:
     col_g, col_txt = st.columns([2, 1])
     with col_g:
         df_chart = pd.DataFrame({"Sistema": ["Convencional", "Smart"], "Custo (R$)": [custo_antigo, custo_novo]})
-        st.bar_chart(df_chart, x="Sistema", y="Custo (R$)", color=["#ff4b4b", "#00d26a"])
+        # Gráfico Corrigido com Altair (para permitir cores customizadas por barra)
+        chart_custo = alt.Chart(df_chart).mark_bar().encode(
+            x=alt.X('Sistema', sort=None), # sort=None mantém a ordem do DataFrame
+            y='Custo (R$)',
+            # Aqui definimos: Convencional = Vermelho, Smart = Verde
+            color=alt.Color('Sistema', scale=alt.Scale(domain=['Convencional', 'Smart'], range=['#ff4b4b', '#00d26a'])),
+            tooltip=['Sistema', 'Custo (R$)']
+        ).properties(title="Comparativo de Custos")
+
+st.altair_chart(chart_custo, use_container_width=True)
         
     with col_txt:
         st.info("""
@@ -263,3 +272,4 @@ with tab4:
         else:
             st.dataframe(df_viz.head(10), use_container_width=True)
             st.caption("Visualizando primeiras 10 linhas.")
+
