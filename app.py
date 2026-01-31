@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import altair as alt  # <--- IMPORTAÇÃO NECESSÁRIA ADICIONADA
 from datetime import datetime, timedelta
 
 # ==============================================================================
@@ -13,7 +14,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilo CSS para deixar os cards bonitos
+# Estilo CSS
 st.markdown("""
 <style>
     .stMetric {
@@ -30,12 +31,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Configurações do Local (Ex: Fazenda em Sorriso-MT) ---
+# --- Configurações do Local ---
 LAT = -12.5425
 LON = -55.7214
 NOME_LOCAL = "Sorriso - Mato Grosso (Capital do Agro)"
 
-# --- LINKS DO GITHUB (Material do Aluno) ---
+# --- LINKS DO GITHUB ---
 BASE_URL = "https://raw.githubusercontent.com/ChiaviniK/agrogencase/main"
 URL_CONFIG = f"{BASE_URL}/config_culturas.csv"
 URL_TARIFAS = f"{BASE_URL}/tarifas_energia.csv"
@@ -47,20 +48,18 @@ URL_HISTORICO_SUJO = f"{BASE_URL}/historico_leituras_sujo.csv"
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/tractor.png", width=80)
     st.title("AgroTech Case")
-    st.caption("v4.0 Final Edition")
+    st.caption("v4.1 Fixed Edition")
     st.markdown("---")
     
     st.header("📁 Material de Apoio")
     st.info("Bases de dados oficiais para o desafio:")
 
-    # Helper para carregar dados
     @st.cache_data
     def load_data(url):
         try:
             return pd.read_csv(url)
         except: return None
 
-    # Botões de Download
     df_config = load_data(URL_CONFIG)
     if df_config is not None:
         st.download_button("📥 1. Regras de Cultura (CSV)", df_config.to_csv(index=False).encode('utf-8'), "config_culturas.csv", "text/csv")
@@ -78,7 +77,6 @@ with st.sidebar:
 # ==============================================================================
 
 def get_realtime_weather():
-    """Busca previsão do tempo em tempo real (Open-Meteo)."""
     try:
         url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current=temperature_2m,rain&hourly=rain&timezone=America%2FSao_Paulo&forecast_days=1"
         r = requests.get(url, timeout=3)
@@ -93,12 +91,9 @@ def get_realtime_weather():
 
 @st.cache_data(ttl=86400)
 def get_history_api(lat, lon, years=3):
-    """Busca histórico de 3 anos na API Archive."""
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=365*years)).strftime('%Y-%m-%d')
-    
     url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&start_date={start_date}&end_date={end_date}&daily=temperature_2m_max,precipitation_sum&timezone=America%2FSao_Paulo"
-    
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
@@ -112,29 +107,18 @@ def get_history_api(lat, lon, years=3):
     except: return pd.DataFrame()
 
 def get_soil_sensor_simulated():
-    """Simula sensor IoT de umidade do solo."""
     return {"umidade": np.random.uniform(25, 60), "bomba_ativa": np.random.choice([True, False])}
 
 def calcular_roi(df_tarifas):
-    """Calcula economia comparando sistema Burro vs Smart."""
-    # Valores Padrão (Caso o CSV falhe)
     t_ponta, t_fora = 1.85, 0.65 
-    
     if df_tarifas is not None:
         try:
-            # Tenta extrair médias do CSV se as colunas existirem
-            # Adaptando para a estrutura provável do seu CSV
             if 'posto' in df_tarifas.columns and 'valor' in df_tarifas.columns:
                 t_ponta = df_tarifas[df_tarifas['posto'].str.contains('Ponta', case=False, na=False)]['valor'].mean()
                 t_fora = df_tarifas[df_tarifas['posto'].str.contains('Fora', case=False, na=False)]['valor'].mean()
         except: pass
-
-    # Cenário Convencional: Liga 2h/dia no horário de pico (18h)
     custo_conv = (2 * 30) * 15 * t_ponta 
-    
-    # Cenário Smart: Liga só 60% dos dias (quando não chove) no horário barato (23h)
     custo_smart = (2 * 30 * 0.6) * 15 * t_fora
-    
     return custo_conv, custo_smart
 
 # ==============================================================================
@@ -150,7 +134,6 @@ with col_logo:
 
 st.divider()
 
-# --- SISTEMA DE ABAS ---
 tab1, tab2, tab3, tab4 = st.tabs([
     "🎛️ Monitoramento", 
     "📅 Histórico (3 Anos)", 
@@ -169,58 +152,42 @@ with tab1:
         weather = get_realtime_weather()
         soil = get_soil_sensor_simulated()
 
-    # KPIs
     k1, k2, k3, k4 = st.columns(4)
     with k1: st.metric("🌡️ Temp. Ambiente", f"{weather['temp_atual']} °C")
     with k2: st.metric("🌧️ Chuva (3h)", f"{weather['chuva_prevista_3h']} mm")
     with k3: st.metric("💧 Umidade Solo", f"{soil['umidade']:.1f} %")
     with k4: st.metric("⚙️ Bomba", "LIGADA 🟢" if soil['bomba_ativa'] else "STANDBY 🟡")
 
-    # Lógica de Decisão
     if weather['chuva_prevista_3h'] > 2:
-        msg = "⚠️ Chuva prevista em breve. Irrigação suspensa para economizar água."
-        tipo = "warning"
+        msg, tipo = "⚠️ Chuva prevista. Irrigação suspensa.", "warning"
     elif soil['umidade'] < 30:
-        msg = "💧 Solo seco e sem chuva prevista. Irrigação ativada."
-        tipo = "success"
+        msg, tipo = "💧 Solo seco. Irrigação ativada.", "success"
     else:
-        msg = "✅ Umidade e clima estáveis. Sistema aguardando."
-        tipo = "info"
-    
+        msg, tipo = "✅ Sistema estável.", "info"
     st.chat_message("assistant").write(f"**IA Diagnosis:** {msg}")
 
-# --- ABA 2: HISTÓRICO 3 ANOS ---
+# --- ABA 2: HISTÓRICO ---
 with tab2:
     st.header("Histórico Climático Regional")
-    st.markdown("Dados extraídos da API *Open-Meteo Archive*.")
-    
-    with st.spinner("Baixando 3 anos de dados..."):
+    with st.spinner("Baixando dados..."):
         df_hist = get_history_api(LAT, LON)
     
     if not df_hist.empty:
         df_hist['Ano'] = df_hist['Data'].dt.year
         anos = sorted(df_hist['Ano'].unique())
-        
         col_filtro, _ = st.columns([1, 2])
         ano_sel = col_filtro.multiselect("Filtrar Anos:", anos, default=anos)
-        
         df_filtered = df_hist[df_hist['Ano'].isin(ano_sel)]
         
-        st.subheader("💧 Precipitação (Chuva)")
+        st.subheader("💧 Precipitação")
         st.bar_chart(df_filtered, x='Data', y='Chuva_mm', color='#4682b4')
-        
-        st.subheader("🔥 Temperaturas Máximas")
+        st.subheader("🔥 Temperaturas")
         st.line_chart(df_filtered, x='Data', y='Temp_Max', color='#ff4b4b')
-        
-        st.download_button("📥 Baixar Histórico Limpo (.csv)", df_hist.to_csv(index=False).encode('utf-8'), "historico_climatico_3anos.csv")
-    else:
-        st.error("Erro de conexão com API Histórica.")
+        st.download_button("📥 Baixar Histórico (.csv)", df_hist.to_csv(index=False).encode('utf-8'), "historico_3anos.csv")
 
-# --- ABA 3: FINANCEIRO (ROI) ---
+# --- ABA 3: FINANCEIRO (ROI) - CORRIGIDA ---
 with tab3:
     st.header("Análise de Viabilidade (ROI)")
-    st.markdown("Comparativo de custos: **Sistema Convencional (Timer)** vs **Smart System**.")
-    
     custo_antigo, custo_novo = calcular_roi(df_tarifas)
     economia = custo_antigo - custo_novo
     perc_eco = (economia / custo_antigo) * 100
@@ -228,48 +195,37 @@ with tab3:
     c_fin1, c_fin2, c_fin3 = st.columns(3)
     c_fin1.metric("Custo Mensal (Convencional)", f"R$ {custo_antigo:,.2f}")
     c_fin2.metric("Custo Mensal (Smart)", f"R$ {custo_novo:,.2f}", delta=f"Economia: {perc_eco:.0f}%")
-    c_fin3.metric("Poupança Anual", f"R$ {(economia*12):,.2f}", delta_color="normal")
+    c_fin3.metric("Poupança Anual", f"R$ {(economia*12):,.2f}")
     
     st.divider()
     
     col_g, col_txt = st.columns([2, 1])
     with col_g:
         df_chart = pd.DataFrame({"Sistema": ["Convencional", "Smart"], "Custo (R$)": [custo_antigo, custo_novo]})
-        # Gráfico Corrigido com Altair (para permitir cores customizadas por barra)
+        
+        # --- CORREÇÃO DO ERRO AQUI USANDO ALTAIR ---
         chart_custo = alt.Chart(df_chart).mark_bar().encode(
-            x=alt.X('Sistema', sort=None), # sort=None mantém a ordem do DataFrame
+            x=alt.X('Sistema', sort=None),
             y='Custo (R$)',
-            # Aqui definimos: Convencional = Vermelho, Smart = Verde
             color=alt.Color('Sistema', scale=alt.Scale(domain=['Convencional', 'Smart'], range=['#ff4b4b', '#00d26a'])),
             tooltip=['Sistema', 'Custo (R$)']
-        ).properties(title="Comparativo de Custos")
-
-st.altair_chart(chart_custo, use_container_width=True)
+        ).properties(title="Redução de Custos Operacionais")
+        
+        st.altair_chart(chart_custo, use_container_width=True)
+        # -------------------------------------------
         
     with col_txt:
-        st.info("""
-        **Ganhos do Projeto:**
-        1. **Tarifa Branca:** O sistema prioriza ligar fora do horário de ponta.
-        2. **Economia Hídrica:** Não liga se houver previsão de chuva.
-        """)
-        if df_tarifas is not None:
-            with st.expander("Ver Tabela de Tarifas"):
-                st.dataframe(df_tarifas)
+        st.info("**Ganhos:**\n1. Tarifa Branca (Fora Ponta)\n2. Economia Hídrica (Chuva)")
 
 # --- ABA 4: AUDITORIA ---
 with tab4:
-    st.header("Auditoria de Qualidade de Dados")
-    st.markdown("Análise do dataset bruto `historico_leituras_sujo.csv`.")
-    
+    st.header("Auditoria de Qualidade")
     if df_sujo is not None:
         df_viz = df_sujo.copy()
         df_viz['timestamp'] = pd.to_datetime(df_viz['timestamp'], errors='coerce')
-        
-        if st.checkbox("🔍 Revelar Anomalias (Spoiler)"):
+        if st.checkbox("🔍 Revelar Anomalias"):
             df_plot = df_viz.dropna(subset=['timestamp'])
             st.line_chart(df_plot.set_index('timestamp')['temp_ambiente'])
-            st.warning("⚠️ ALERTA: Sensores indicando >100°C. Necessário limpeza de dados!")
+            st.warning("⚠️ ALERTA: Sensores >100°C detectados.")
         else:
             st.dataframe(df_viz.head(10), use_container_width=True)
-            st.caption("Visualizando primeiras 10 linhas.")
-
