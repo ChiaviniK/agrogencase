@@ -4,112 +4,262 @@ import numpy as np
 import requests
 from datetime import datetime, timedelta
 
-# --- (MANTENHA TODAS AS IMPORTAÇÕES E CONFIGURAÇÕES INICIAIS IGUAIS) ---
-# ... (Código anterior de Config, CSS, Sidebar, Funções de API e Simulação) ...
+# ==============================================================================
+# 1. CONFIGURAÇÃO GERAL
+# ==============================================================================
+st.set_page_config(
+    page_title="AgroTech: Smart Irrigation",
+    page_icon="🚜",
+    layout="wide"
+)
+
+# Estilo CSS para deixar os cards bonitos
+st.markdown("""
+<style>
+    .stMetric {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #dee2e6;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    }
+    .stButton>button {
+        width: 100%;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- Configurações do Local (Ex: Fazenda em Sorriso-MT) ---
+LAT = -12.5425
+LON = -55.7214
+NOME_LOCAL = "Sorriso - Mato Grosso (Capital do Agro)"
+
+# --- LINKS DO GITHUB (Material do Aluno) ---
+BASE_URL = "https://raw.githubusercontent.com/ChiaviniK/agrogencase/main"
+URL_CONFIG = f"{BASE_URL}/config_culturas.csv"
+URL_TARIFAS = f"{BASE_URL}/tarifas_energia.csv"
+URL_HISTORICO_SUJO = f"{BASE_URL}/historico_leituras_sujo.csv"
 
 # ==============================================================================
-# 💰 FUNÇÃO NOVA: CÁLCULO FINANCEIRO
+# 2. SIDEBAR (AREA DO ALUNO)
 # ==============================================================================
-def calcular_economia_simulada(df_tarifas):
-    """
-    Simula 30 dias de operação para comparar Custo Convencional vs Smart.
-    """
-    # Se não tiver o arquivo, usa valores padrão
-    tarifa_ponta = 1.85      # R$/kWh (Horário de Pico - Caro)
-    tarifa_fora_ponta = 0.65 # R$/kWh (Horário Normal - Barato)
+with st.sidebar:
+    st.image("https://img.icons8.com/color/96/tractor.png", width=80)
+    st.title("AgroTech Case")
+    st.caption("v4.0 Final Edition")
+    st.markdown("---")
     
-    if df_tarifas is not None and not df_tarifas.empty:
+    st.header("📁 Material de Apoio")
+    st.info("Bases de dados oficiais para o desafio:")
+
+    # Helper para carregar dados
+    @st.cache_data
+    def load_data(url):
         try:
-            # Tenta pegar do CSV (Assumindo colunas 'modalidade' e 'valor')
-            # Ajuste conforme seu CSV real. Aqui é um exemplo genérico.
-            tarifa_ponta = df_tarifas[df_tarifas['posto'] == 'Ponta']['valor'].mean()
-            tarifa_fora_ponta = df_tarifas[df_tarifas['posto'] == 'Fora Ponta']['valor'].mean()
+            return pd.read_csv(url)
+        except: return None
+
+    # Botões de Download
+    df_config = load_data(URL_CONFIG)
+    if df_config is not None:
+        st.download_button("📥 1. Regras de Cultura (CSV)", df_config.to_csv(index=False).encode('utf-8'), "config_culturas.csv", "text/csv")
+
+    df_tarifas = load_data(URL_TARIFAS)
+    if df_tarifas is not None:
+        st.download_button("📥 2. Tarifas de Energia (CSV)", df_tarifas.to_csv(index=False).encode('utf-8'), "tarifas_energia.csv", "text/csv")
+
+    df_sujo = load_data(URL_HISTORICO_SUJO)
+    if df_sujo is not None:
+        st.download_button("📥 3. Histórico Sensores (CSV)", df_sujo.to_csv(index=False).encode('utf-8'), "historico_leituras_sujo.csv", "text/csv")
+
+# ==============================================================================
+# 3. MOTORES DE DADOS (BACKEND)
+# ==============================================================================
+
+def get_realtime_weather():
+    """Busca previsão do tempo em tempo real (Open-Meteo)."""
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current=temperature_2m,rain&hourly=rain&timezone=America%2FSao_Paulo&forecast_days=1"
+        r = requests.get(url, timeout=3)
+        data = r.json()
+        return {
+            "temp_atual": data['current']['temperature_2m'],
+            "chuva_atual": data['current']['rain'],
+            "chuva_prevista_3h": sum(data['hourly']['rain'][0:3])
+        }
+    except:
+        return {"temp_atual": 28.5, "chuva_atual": 0.0, "chuva_prevista_3h": 0.0}
+
+@st.cache_data(ttl=86400)
+def get_history_api(lat, lon, years=3):
+    """Busca histórico de 3 anos na API Archive."""
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=365*years)).strftime('%Y-%m-%d')
+    
+    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&start_date={start_date}&end_date={end_date}&daily=temperature_2m_max,precipitation_sum&timezone=America%2FSao_Paulo"
+    
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        df = pd.DataFrame({
+            'Data': data['daily']['time'],
+            'Temp_Max': data['daily']['temperature_2m_max'],
+            'Chuva_mm': data['daily']['precipitation_sum']
+        })
+        df['Data'] = pd.to_datetime(df['Data'])
+        return df
+    except: return pd.DataFrame()
+
+def get_soil_sensor_simulated():
+    """Simula sensor IoT de umidade do solo."""
+    return {"umidade": np.random.uniform(25, 60), "bomba_ativa": np.random.choice([True, False])}
+
+def calcular_roi(df_tarifas):
+    """Calcula economia comparando sistema Burro vs Smart."""
+    # Valores Padrão (Caso o CSV falhe)
+    t_ponta, t_fora = 1.85, 0.65 
+    
+    if df_tarifas is not None:
+        try:
+            # Tenta extrair médias do CSV se as colunas existirem
+            # Adaptando para a estrutura provável do seu CSV
+            if 'posto' in df_tarifas.columns and 'valor' in df_tarifas.columns:
+                t_ponta = df_tarifas[df_tarifas['posto'].str.contains('Ponta', case=False, na=False)]['valor'].mean()
+                t_fora = df_tarifas[df_tarifas['posto'].str.contains('Fora', case=False, na=False)]['valor'].mean()
         except: pass
 
-    # Simulação de 30 dias
-    consumo_bomba_kwh = 15 # Bomba de 15 kWh (Potência média)
+    # Cenário Convencional: Liga 2h/dia no horário de pico (18h)
+    custo_conv = (2 * 30) * 15 * t_ponta 
     
-    # CENÁRIO 1: SISTEMA CONVENCIONAL (Burro)
-    # Liga todo dia as 18h (Ponta) por 2 horas, chovendo ou não.
-    horas_convencional = 2 * 30
-    custo_convencional = horas_convencional * consumo_bomba_kwh * tarifa_ponta
+    # Cenário Smart: Liga só 60% dos dias (quando não chove) no horário barato (23h)
+    custo_smart = (2 * 30 * 0.6) * 15 * t_fora
     
-    # CENÁRIO 2: SISTEMA SMART (Seu Projeto)
-    # Só liga se não chover (Economia de 40% dos dias) e liga as 22h (Fora Ponta)
-    dias_irrigados = 30 * 0.6 # Irrigou só 60% dos dias
-    horas_smart = 2 * dias_irrigados
-    custo_smart = horas_smart * consumo_bomba_kwh * tarifa_fora_ponta
-    
-    return custo_convencional, custo_smart, (custo_convencional - custo_smart)
+    return custo_conv, custo_smart
 
 # ==============================================================================
-# 🖥️ INTERFACE ATUALIZADA
+# 4. INTERFACE PRINCIPAL
 # ==============================================================================
 
-# ... (Cabeçalho e Sidebar iguais ao anterior) ...
+col_header, col_logo = st.columns([4, 1])
+with col_header:
+    st.title("🌱 Smart Irrigation System")
+    st.subheader(f"📍 Unidade: {NOME_LOCAL}")
+with col_logo:
+    st.map(pd.DataFrame({'lat': [LAT], 'lon': [LON]}), zoom=13)
 
-# CRIAÇÃO DAS 4 ABAS (Adicionei a 'Gestão de Custos')
-tab_realtime, tab_history, tab_finance, tab_audit = st.tabs([
-    "🎛️ Tempo Real", 
+st.divider()
+
+# --- SISTEMA DE ABAS ---
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🎛️ Monitoramento", 
     "📅 Histórico (3 Anos)", 
-    "💰 Gestão de Custos & ROI",  # <--- NOVA ABA
-    "🕵️ Auditoria"
+    "💰 Gestão Financeira", 
+    "🕵️ Auditoria de Dados"
 ])
 
-# --- ABA 1 e 2: (MANTENHA O CÓDIGO ANTERIOR IGUAL) ---
-# ... (Copie o código das abas Tempo Real e Histórico aqui) ...
+# --- ABA 1: TEMPO REAL ---
+with tab1:
+    col_btn, _ = st.columns([1, 3])
+    if col_btn.button('🔄 Sincronizar Sensores'):
+        weather = get_realtime_weather()
+        soil = get_soil_sensor_simulated()
+        st.toast('Telemetria atualizada!', icon='📡')
+    else:
+        weather = get_realtime_weather()
+        soil = get_soil_sensor_simulated()
 
-# --- ABA 3: GESTÃO DE CUSTOS (A NOVIDADE) ---
-with tab_finance:
-    st.header("Análise de Viabilidade Econômica")
-    st.markdown("Comparativo: **Irrigação Timer (Convencional)** vs **Irrigação Smart (EcoFlow)**.")
+    # KPIs
+    k1, k2, k3, k4 = st.columns(4)
+    with k1: st.metric("🌡️ Temp. Ambiente", f"{weather['temp_atual']} °C")
+    with k2: st.metric("🌧️ Chuva (3h)", f"{weather['chuva_prevista_3h']} mm")
+    with k3: st.metric("💧 Umidade Solo", f"{soil['umidade']:.1f} %")
+    with k4: st.metric("⚙️ Bomba", "LIGADA 🟢" if soil['bomba_ativa'] else "STANDBY 🟡")
+
+    # Lógica de Decisão
+    if weather['chuva_prevista_3h'] > 2:
+        msg = "⚠️ Chuva prevista em breve. Irrigação suspensa para economizar água."
+        tipo = "warning"
+    elif soil['umidade'] < 30:
+        msg = "💧 Solo seco e sem chuva prevista. Irrigação ativada."
+        tipo = "success"
+    else:
+        msg = "✅ Umidade e clima estáveis. Sistema aguardando."
+        tipo = "info"
     
-    # Tenta carregar as tarifas que estão no Sidebar
-    df_tarifas = load_data(URL_TARIFAS)
+    st.chat_message("assistant").write(f"**IA Diagnosis:** {msg}")
+
+# --- ABA 2: HISTÓRICO 3 ANOS ---
+with tab2:
+    st.header("Histórico Climático Regional")
+    st.markdown("Dados extraídos da API *Open-Meteo Archive*.")
     
-    if df_tarifas is None:
-        st.warning("⚠️ Arquivo `tarifas_energia.csv` não encontrado. Usando valores médios de mercado.")
+    with st.spinner("Baixando 3 anos de dados..."):
+        df_hist = get_history_api(LAT, LON)
     
-    # Executa a simulação
-    custo_old, custo_new, economia = calcular_economia_simulada(df_tarifas)
-    
-    # 1. KPIs Financeiros
-    col_money1, col_money2, col_money3 = st.columns(3)
-    
-    with col_money1:
-        st.metric("Custo Mensal (Sistema Antigo)", f"R$ {custo_old:,.2f}", help="Ligado todo dia no horário de pico")
-    
-    with col_money2:
-        st.metric("Custo Mensal (Smart System)", f"R$ {custo_new:,.2f}", delta=f"Economia: {((custo_old-custo_new)/custo_old)*100:.0f}%", delta_color="normal")
+    if not df_hist.empty:
+        df_hist['Ano'] = df_hist['Data'].dt.year
+        anos = sorted(df_hist['Ano'].unique())
         
-    with col_money3:
-        st.metric("Poupança Anual Projetada", f"R$ {(economia * 12):,.2f}", help="Dinheiro salvo em 12 meses")
+        col_filtro, _ = st.columns([1, 2])
+        ano_sel = col_filtro.multiselect("Filtrar Anos:", anos, default=anos)
+        
+        df_filtered = df_hist[df_hist['Ano'].isin(ano_sel)]
+        
+        st.subheader("💧 Precipitação (Chuva)")
+        st.bar_chart(df_filtered, x='Data', y='Chuva_mm', color='#4682b4')
+        
+        st.subheader("🔥 Temperaturas Máximas")
+        st.line_chart(df_filtered, x='Data', y='Temp_Max', color='#ff4b4b')
+        
+        st.download_button("📥 Baixar Histórico Limpo (.csv)", df_hist.to_csv(index=False).encode('utf-8'), "historico_climatico_3anos.csv")
+    else:
+        st.error("Erro de conexão com API Histórica.")
 
+# --- ABA 3: FINANCEIRO (ROI) ---
+with tab3:
+    st.header("Análise de Viabilidade (ROI)")
+    st.markdown("Comparativo de custos: **Sistema Convencional (Timer)** vs **Smart System**.")
+    
+    custo_antigo, custo_novo = calcular_roi(df_tarifas)
+    economia = custo_antigo - custo_novo
+    perc_eco = (economia / custo_antigo) * 100
+    
+    c_fin1, c_fin2, c_fin3 = st.columns(3)
+    c_fin1.metric("Custo Mensal (Convencional)", f"R$ {custo_antigo:,.2f}")
+    c_fin2.metric("Custo Mensal (Smart)", f"R$ {custo_novo:,.2f}", delta=f"Economia: {perc_eco:.0f}%")
+    c_fin3.metric("Poupança Anual", f"R$ {(economia*12):,.2f}", delta_color="normal")
+    
     st.divider()
     
-    # 2. Gráfico Comparativo de Barras
-    col_chart, col_explain = st.columns([2, 1])
-    
-    with col_chart:
-        dados_grafico = pd.DataFrame({
-            "Cenário": ["Convencional (Timer)", "Smart Irrigation (IoT)"],
-            "Custo (R$)": [custo_old, custo_new]
-        })
+    col_g, col_txt = st.columns([2, 1])
+    with col_g:
+        df_chart = pd.DataFrame({"Sistema": ["Convencional", "Smart"], "Custo (R$)": [custo_antigo, custo_novo]})
+        st.bar_chart(df_chart, x="Sistema", y="Custo (R$)", color=["#ff4b4b", "#00d26a"])
         
-        st.subheader("📉 Redução de Custos Operacionais")
-        st.bar_chart(dados_grafico, x="Cenário", y="Custo (R$)", color=["#ff4b4b", "#00d26a"]) # Vermelho vs Verde
-
-    with col_explain:
+    with col_txt:
         st.info("""
-        **Por que a economia é tão grande?**
-        
-        1. **Smart Rain:** O sistema não liga quando a API prevê chuva (Economia de Água/Energia).
-        2. **Smart Time:** O sistema programa a irrigação para horários "Fora de Ponta" (Madrugada), onde a tarifa de energia é cerca de **3x mais barata**.
+        **Ganhos do Projeto:**
+        1. **Tarifa Branca:** O sistema prioriza ligar fora do horário de ponta.
+        2. **Economia Hídrica:** Não liga se houver previsão de chuva.
         """)
-        
         if df_tarifas is not None:
-            with st.expander("Ver Tabela de Tarifas Carregada"):
-                st.dataframe(df_tarifas, use_container_width=True)
+            with st.expander("Ver Tabela de Tarifas"):
+                st.dataframe(df_tarifas)
 
-# --- ABA 4: AUDITORIA (MANTENHA IGUAL) ---
-# ... (Código da Auditoria aqui) ...
+# --- ABA 4: AUDITORIA ---
+with tab4:
+    st.header("Auditoria de Qualidade de Dados")
+    st.markdown("Análise do dataset bruto `historico_leituras_sujo.csv`.")
+    
+    if df_sujo is not None:
+        df_viz = df_sujo.copy()
+        df_viz['timestamp'] = pd.to_datetime(df_viz['timestamp'], errors='coerce')
+        
+        if st.checkbox("🔍 Revelar Anomalias (Spoiler)"):
+            df_plot = df_viz.dropna(subset=['timestamp'])
+            st.line_chart(df_plot.set_index('timestamp')['temp_ambiente'])
+            st.warning("⚠️ ALERTA: Sensores indicando >100°C. Necessário limpeza de dados!")
+        else:
+            st.dataframe(df_viz.head(10), use_container_width=True)
+            st.caption("Visualizando primeiras 10 linhas.")
