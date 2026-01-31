@@ -1,168 +1,187 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import requests
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
 from datetime import datetime
 
-# --- Configuração da Página ---
-st.set_page_config(
-    page_title="AgroTech: Case Study Hub",
-    page_icon="🚜",
-    layout="wide"
-)
+# --- CONFIGURAÇÃO ---
+st.set_page_config(page_title="EcoFlow | Smart Irrigation", page_icon="💧", layout="wide")
 
-# --- Estilo CSS Minimalista ---
 st.markdown("""
 <style>
-    .stMetric {
-        background-color: #f8f9fa;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #dee2e6;
-    }
-    .stButton>button {
-        width: 100%;
+    .stApp { background-color: #f0f8ff; color: #004d40; }
+    h1, h2 { color: #00695c !important; }
+    div[data-testid="stMetric"] {
+        background-color: white; border-radius: 10px; padding: 15px;
+        border: 1px solid #b2dfdb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Configurações do Local (Cristo Redentor, RJ) ---
-LAT = -22.9519
-LON = -43.2105
-NOME_LOCAL = "Rio de Janeiro - Cristo Redentor"
-
-# --- LINKS DO GITHUB (Atualize com seu usuário se necessário) ---
-# DICA: Use o link "Raw" do GitHub para funcionar o download direto
-BASE_URL = "https://raw.githubusercontent.com/ChiaviniK/agrogencase/main"
-URL_CONFIG = f"{BASE_URL}/config_culturas.csv"
-URL_TARIFAS = f"{BASE_URL}/tarifas_energia.csv"
-URL_HISTORICO_SUJO = f"{BASE_URL}/historico_leituras_sujo.csv"
-
-# --- SIDEBAR: Área do Aluno (Downloads) ---
-with st.sidebar:
-    st.image("https://img.icons8.com/color/96/tractor.png", width=80)
-    st.title("AgroTech Case")
-    st.markdown("---")
-    st.header("📁 Material de Apoio")
-    st.info("Baixe as bases de dados para resolver o desafio:")
-
-    # Função Helper para Download
-    @st.cache_data
-    def load_data(url):
-        try:
-            return pd.read_csv(url)
-        except:
-            return None
-
-    # 1. Regras (Config)
-    df_config = load_data(URL_CONFIG)
-    if df_config is not None:
-        st.download_button(
-            "📥 1. Regras de Cultura (CSV)",
-            data=df_config.to_csv(index=False).encode('utf-8'),
-            file_name="config_culturas.csv",
-            mime="text/csv"
-        )
-
-    # 2. Tarifas (Energia) - NOVO!
-    df_tarifas = load_data(URL_TARIFAS)
-    if df_tarifas is not None:
-        st.download_button(
-            "📥 2. Tarifas de Energia (CSV)",
-            data=df_tarifas.to_csv(index=False).encode('utf-8'),
-            file_name="tarifas_energia.csv",
-            mime="text/csv",
-            help="Use para otimizar custos (Tarifa Branca)"
-        )
-
-    # 3. Histórico (Sujo) - ATUALIZADO!
-    df_sujo = load_data(URL_HISTORICO_SUJO)
-    if df_sujo is not None:
-        st.download_button(
-            "📥 3. Histórico Sensores (CSV)",
-            data=df_sujo.to_csv(index=False).encode('utf-8'),
-            file_name="historico_leituras_sujo.csv",
-            mime="text/csv",
-            help="ATENÇÃO: Contém dados brutos que precisam de tratamento!"
-        )
-    else:
-        st.error("Erro ao carregar CSVs. Verifique o GitHub.")
+# ==============================================================================
+# 📡 MOTOR 1: API DE PREVISÃO DO TEMPO (Open-Meteo Forecast)
+# ==============================================================================
+@st.cache_data(ttl=3600) # Atualiza a cada 1 hora
+def get_forecast_data(lat, lon):
+    """
+    Busca a previsão do tempo para os próximos 7 dias.
+    Essencial para o sistema decidir se irriga ou espera a chuva.
+    """
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=precipitation_sum,precipitation_probability_max&timezone=America%2FSao_Paulo"
     
-    st.markdown("---")
-    st.caption("v2.0 - Pleno Level Challenge")
-
-# --- Funções de Dados (Simulação) ---
-
-def get_weather_data():
-    """Busca dados REAIS de clima da API Open-Meteo"""
     try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current=temperature_2m,rain&hourly=rain&timezone=America%2FSao_Paulo&forecast_days=1"
-        response = requests.get(url)
-        data = response.json()
-        return {
-            "temp_atual": data['current']['temperature_2m'],
-            "chuva_atual": data['current']['rain'],
-            "chuva_prevista_3h": sum(data['hourly']['rain'][0:3])
-        }
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            df = pd.DataFrame({
+                'Data': data['daily']['time'],
+                'Chuva_mm': data['daily']['precipitation_sum'],
+                'Prob_Chuva_%': data['daily']['precipitation_probability_max']
+            })
+            return df
     except:
-        return {"temp_atual": 25.0, "chuva_atual": 0.0, "chuva_prevista_3h": 0.0}
+        pass
+    return pd.DataFrame()
 
-def get_soil_sensor_simulated():
-    """Simula sensor"""
-    return {
-        "umidade": np.random.uniform(30, 80),
-        "bomba_ativa": np.random.choice([True, False])
-    }
-
-# --- Interface Principal ---
-
-col_header, col_logo = st.columns([4, 1])
-with col_header:
-    st.title("🌱 Smart Irrigation System")
-    st.subheader(f"📍 Unidade: {NOME_LOCAL}")
-with col_logo:
-    st.map(pd.DataFrame({'lat': [LAT], 'lon': [LON]}), zoom=13)
-
-st.divider()
-
-# Botão Refresh
-if st.button('🔄 Atualizar Telemetria'):
-    with st.spinner('Conectando satélite...'):
-        weather = get_weather_data()
-        soil = get_soil_sensor_simulated()
-        st.toast('Dados atualizados!', icon='✅')
-else:
-    weather = get_weather_data()
-    soil = get_soil_sensor_simulated()
-
-# KPIs
-col1, col2, col3, col4 = st.columns(4)
-with col1: st.metric("🌡️ Temp. Ambiente", f"{weather['temp_atual']} °C")
-with col2: st.metric("🌧️ Chuva (3h)", f"{weather['chuva_prevista_3h']} mm")
-with col3: st.metric("💧 Umidade Solo", f"{soil['umidade']:.1f} %")
-with col4: st.metric("⚙️ Status Bomba", "LIGADA" if soil['bomba_ativa'] else "OFF")
-
-# --- Engine de Decisão ---
-st.subheader("🧠 Diagnóstico da IA")
-st.info("O sistema está operando com base nas regras de negócio carregadas.")
-
-# --- Auditoria de Qualidade de Dados (Visualização do Problema) ---
-st.divider()
-st.subheader("🕵️ Auditoria de Qualidade (Data Quality)")
-st.markdown("Visualização dos dados brutos do arquivo `historico_leituras_sujo.csv`.")
-
-if df_sujo is not None:
-    # Convertendo data para o gráfico funcionar
-    df_viz = df_sujo.copy()
-    df_viz['timestamp'] = pd.to_datetime(df_viz['timestamp'])
+# ==============================================================================
+# 📡 MOTOR 2: API HISTÓRICA (Para Planejamento)
+# ==============================================================================
+@st.cache_data
+def get_historical_rain(lat, lon):
+    """Busca histórico de chuvas do ano passado para comparação."""
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - pd.Timedelta(days=365)).strftime("%Y-%m-%d")
+    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&start_date={start_date}&end_date={end_date}&daily=precipitation_sum&timezone=America%2FSao_Paulo"
     
-    # Checkbox para dar spoiler do erro
-    mostrar_erro = st.checkbox("🔍 Revelar anomalias nos dados (Spoiler)")
+    try:
+        r = requests.get(url)
+        data = r.json()
+        df = pd.DataFrame({'Data': data['daily']['time'], 'Chuva_mm': data['daily']['precipitation_sum']})
+        return df
+    except: return pd.DataFrame()
+
+# ==============================================================================
+# 🔌 SIMULADOR DE SENSORES IOT (Umidade do Solo)
+# ==============================================================================
+def ler_sensor_umidade():
+    """Simula a leitura de um sensor capacitivo no solo (0-100%)."""
+    # Gera um valor aleatório realista (ex: solo secando)
+    return np.random.randint(20, 45) # Entre 20% (Seco) e 45% (Úmido)
+
+# ==============================================================================
+# 🖥️ INTERFACE
+# ==============================================================================
+st.sidebar.image("https://img.icons8.com/fluency/96/sprinkler.png", width=80)
+st.sidebar.title("EcoFlow")
+st.sidebar.caption("Irrigação Inteligente")
+st.sidebar.markdown("---")
+
+# Configuração da Fazenda (Input do Usuário)
+st.sidebar.subheader("📍 Configuração")
+cidade = st.sidebar.selectbox("Local:", ["Ribeirão Preto (SP)", "Petrolina (PE)", "Sorriso (MT)"])
+
+# Coordenadas fixas para exemplo (Poderia vir de uma API de Geocoding)
+COORDS = {
+    "Ribeirão Preto (SP)": (-21.17, -47.81),
+    "Petrolina (PE)": (-9.38, -40.50),
+    "Sorriso (MT)": (-12.54, -55.72)
+}
+LAT, LON = COORDS[cidade]
+
+st.title(f"Sistema de Irrigação: {cidade}")
+
+tab_control, tab_forecast, tab_hist = st.tabs(["🎛️ Controle (IoT)", "🌦️ Previsão (Smart)", "📊 Histórico"])
+
+# --- TAB 1: CONTROLE EM TEMPO REAL ---
+with tab_control:
+    st.header("Monitoramento em Tempo Real")
     
-    if mostrar_erro:
-        st.line_chart(df_viz.set_index('timestamp')['temp_ambiente'])
-        st.warning("⚠️ ALERTA: Detectamos picos de temperatura irreais (>100°C). Sua equipe precisa filtrar isso!")
+    # 1. Leitura dos Sensores
+    umidade_solo = ler_sensor_umidade()
+    status_bomba = "DESLIGADA"
+    cor_status = "off"
+    
+    # LÓGICA SMART (O Coração do Projeto)
+    # Regra: Se umidade < 30% LIGAR, mas só se NÃO for chover hoje.
+    
+    df_previsao = get_forecast_data(LAT, LON)
+    chuva_hoje = 0
+    if not df_previsao.empty:
+        chuva_hoje = df_previsao.iloc[0]['Chuva_mm']
+    
+    decisao = ""
+    if umidade_solo < 30:
+        if chuva_hoje > 5:
+            decisao = "⚠️ Solo Seco, mas CHUVA PREVISTA. Irrigação suspensa (Economia)."
+            status_bomba = "DESLIGADA (Smart Mode)"
+        else:
+            decisao = "💧 Solo Seco. Iniciando Irrigação..."
+            status_bomba = "LIGADA 🟢"
     else:
-        # Mostra apenas as primeiras linhas para não assustar de cara
-        st.dataframe(df_viz.head(10))
-        st.caption("Amostra das primeiras 10 linhas.")
+        decisao = "✅ Umidade Ideal. Sistema em Standby."
+        status_bomba = "DESLIGADA"
+
+    # KPIs
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Umidade do Solo", f"{umidade_solo}%", delta="-2% (última hora)")
+    c2.metric("Status da Bomba", status_bomba)
+    c3.metric("Previsão Chuva (Hoje)", f"{chuva_hoje} mm")
+    
+    st.info(f"🤖 **IA Decision:** {decisao}")
+    
+    # Gauge (Velocímetro) da Umidade
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = umidade_solo,
+        title = {'text': "Umidade do Solo (%)"},
+        gauge = {
+            'axis': {'range': [0, 100]},
+            'bar': {'color': "darkblue"},
+            'steps': [
+                {'range': [0, 30], 'color': "#ffcccb"},  # Seco (Vermelho claro)
+                {'range': [30, 70], 'color': "#90ee90"}, # Bom (Verde claro)
+                {'range': [70, 100], 'color': "#add8e6"} # Encharcado (Azul claro)
+            ],
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': 30
+            }
+        }
+    ))
+    fig.update_layout(height=300)
+    st.plotly_chart(fig, use_container_width=True)
+
+# --- TAB 2: PREVISÃO (API) ---
+with tab_forecast:
+    st.header("Planejamento Hídrico (7 Dias)")
+    if not df_previsao.empty:
+        # Gráfico de Previsão
+        fig_prev = px.bar(
+            df_previsao, x='Data', y='Chuva_mm',
+            title="Previsão de Precipitação (Open-Meteo API)",
+            text='Prob_Chuva_%',
+            labels={'Chuva_mm': 'Chuva Esperada (mm)', 'Prob_Chuva_%': 'Probabilidade'}
+        )
+        fig_prev.update_traces(marker_color='#4682b4', texttemplate='%{text}% Prob.')
+        st.plotly_chart(fig_prev, use_container_width=True)
+        
+        st.dataframe(df_previsao, use_container_width=True)
+    else:
+        st.error("Erro na API de Previsão.")
+
+# --- TAB 3: HISTÓRICO ---
+with tab_hist:
+    st.header("Histórico da Região (1 Ano)")
+    with st.spinner("Carregando dados históricos..."):
+        df_hist = get_historical_rain(LAT, LON)
+    
+    if not df_hist.empty:
+        fig_hist = px.line(df_hist, x='Data', y='Chuva_mm', title="Regime de Chuvas (Últimos 12 Meses)")
+        st.plotly_chart(fig_hist, use_container_width=True)
+        
+        st.download_button("📥 Baixar Histórico (.csv)", df_hist.to_csv().encode('utf-8'), "historico_chuvas.csv")
+    else:
+        st.warning("Dados históricos indisponíveis.")
